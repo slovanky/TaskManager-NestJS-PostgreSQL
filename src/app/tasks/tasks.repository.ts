@@ -53,7 +53,6 @@ export class TasksRepository {
       title,
       description,
       status: TaskStatus.OPEN,
-      userId: user.id,
       user,
     });
 
