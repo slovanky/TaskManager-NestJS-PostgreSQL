@@ -1,74 +1,99 @@
 import {
-  ConflictException,
   Injectable,
-  InternalServerErrorException,
-  NotFoundException,
   UnauthorizedException,
+  ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { AuthCredentialsDto } from './dto/auth-credentials.dto';
-import { UsersRepository } from './users.repository';
-import * as bcrypt from 'bcrypt';
-import { User } from './user.entity';
-import { JwtPayload } from './jwt-payload.interface';
 import { JwtService } from '@nestjs/jwt';
+import { UsersRepository } from '../users/users.repository';
+import { CreateUserDto } from '../users/dto/create-user.dto';
+import { LoginDto } from './dto/login.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User)
     private usersRepository: UsersRepository,
     private jwtService: JwtService,
   ) {
     // ...
   }
 
-  async signIn(
-    authCredentialsDto: AuthCredentialsDto,
-  ): Promise<{ accessToken: string }> {
-    const { username, password } = authCredentialsDto;
-
-    const user = await this.usersRepository.findOne({ where: { username } });
-
-    if (user && (await bcrypt.compare(password, user.password))) {
-      const payload: JwtPayload = { username };
-      const accessToken: string = await this.jwtService.signAsync(payload);
-      return { accessToken };
-    } else {
-      throw new UnauthorizedException('Please check your login credentials');
+  async signup(createUserDto: CreateUserDto) {
+    // Check if user already exists
+    const existingUser = await this.usersRepository.findOneByEmail(
+      createUserDto.email,
+    );
+    if (existingUser) {
+      throw new ConflictException('Email already in use');
     }
-  }
 
-  async signUp(authCredentialsDto: AuthCredentialsDto): Promise<void> {
-    const { username, password } = authCredentialsDto;
+    // Hash the password
+    const hashedPassword = await this.hashPassword(createUserDto.password);
 
-    const salt = await bcrypt.genSalt();
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const user = this.usersRepository.create({
-      username,
+    // Create user with hashed password
+    const user = await this.usersRepository.create({
+      ...createUserDto,
       password: hashedPassword,
     });
 
-    try {
-      await this.usersRepository.save(user);
-    } catch (error) {
-      if (error.code === '23505') {
-        // duplicate username
-        throw new ConflictException('Username already exists');
-      } else {
-        throw new InternalServerErrorException();
-      }
-    }
+    // Remove password from returned object
+    const { password, ...result } = user;
+
+    // Generate JWT token
+    const token = this.generateToken(user.id, user.email);
+
+    return {
+      user: result,
+      accessToken: token,
+    };
   }
 
-  async getUserById(id: string): Promise<User> {
-    const found = await this.usersRepository.findOne({ where: { id } });
-
-    if (!found) {
-      throw new NotFoundException(`User with ID "${id}" not found`);
+  async signin(loginDto: LoginDto) {
+    // Find user by email
+    const user = await this.usersRepository.findOneByEmail(loginDto.email);
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
     }
 
-    return found;
+    // Verify password
+    const isPasswordValid = await this.comparePassword(
+      loginDto.password,
+      user.password,
+    );
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Generate JWT token
+    const token = this.generateToken(user.id, user.email);
+
+    // Remove password from returned object
+    const { password, ...result } = user;
+
+    return {
+      user: result,
+      accessToken: token,
+    };
+  }
+
+  async validateUser(userId: string) {
+    return this.usersRepository.findOneById(userId);
+  }
+
+  private generateToken(userId: string, email: string) {
+    const payload = { sub: userId, email };
+    return this.jwtService.sign(payload);
+  }
+
+  private async hashPassword(password: string): Promise<string> {
+    const salt = await bcrypt.genSalt();
+    return bcrypt.hash(password, salt);
+  }
+
+  private async comparePassword(
+    enteredPassword: string,
+    dbPassword: string,
+  ): Promise<boolean> {
+    return bcrypt.compare(enteredPassword, dbPassword);
   }
 }
