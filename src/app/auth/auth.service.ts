@@ -8,6 +8,7 @@ import { UsersRepository } from '../users/users.repository';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
+import { User } from '../users/user.entity';
 
 @Injectable()
 export class AuthService {
@@ -51,6 +52,7 @@ export class AuthService {
   async signin(loginDto: LoginDto) {
     // Find user by email
     const user = await this.usersRepository.findOneByEmail(loginDto.email);
+
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -60,6 +62,7 @@ export class AuthService {
       loginDto.password,
       user.password,
     );
+
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -76,8 +79,8 @@ export class AuthService {
     };
   }
 
-  async validateUser(userId: string) {
-    return this.usersRepository.findOneById(userId);
+  async validateUser(userId: string): Promise<User | null> {
+    return await this.usersRepository.findOneById(userId);
   }
 
   private generateToken(userId: string, email: string) {
